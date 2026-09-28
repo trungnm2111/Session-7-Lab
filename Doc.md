@@ -1,16 +1,5 @@
 # Lập trình Socket trên Linux
 
-## Mục lục
-
-- [Phần 1. Tổng quan](#phần-1-tổng-quan)
-- [Phần 2. Địa chỉ socket và thứ tự byte](#phần-2-địa-chỉ-socket-và-thứ-tự-byte)
-- [Phần 3. Các hàm `inet_aton`, `inet_pton`, `inet_ntop`](#phần-3-các-hàm-inet_aton-inet_pton-inet_ntop)
-- [Phần 4. Các hàm socket cơ bản](#phần-4-các-hàm-socket-cơ-bản)
-- [Phần 5. Server đồng thời (Concurrent Servers)](#phần-5-server-đồng-thời-concurrent-servers)
-- [Phần 6. Các hàm `close`, `getsockname`, `getpeername`](#phần-6-các-hàm-close-getsockname-getpeername)
-
----
-
 ## Phần 1. Tổng quan
 
 ### 1.1. Độc lập giao thức (Protocol Independence)
@@ -527,3 +516,391 @@ socklen_t len = sizeof(local);
 getsockname(sockfd, (struct sockaddr *) &local, &len);
 printf("Cổng cục bộ: %d\n", ntohs(local.sin_port));
 ```
+
+---
+
+## Phần 7. TCP Echo Server và Client (`str_echo` / `str_cli`)
+
+![Mô hình TCP echo client–server](image-5.png)
+
+Đây là mô hình TCP client–server cơ bản: client gửi dữ liệu tới server, server nhận rồi gửi lại đúng dữ liệu đó cho client.
+
+| Hàm | Chạy ở | Nhiệm vụ |
+|-----|--------|----------|
+| `str_cli()` | Client | Đọc một dòng từ `stdin`, gửi qua socket, đọc phản hồi từ server rồi in ra `stdout` |
+| `str_echo()` | Server (tiến trình con) | Đọc dữ liệu từ connected socket rồi ghi trả lại cho client |
+
+Qua ví dụ này có thể quan sát trọn luồng xử lý của một kết nối TCP:
+
+1. Client gọi `connect()`, server nhận kết nối bằng `accept()`.
+2. Server `fork()` một tiến trình con để chạy `str_echo()` (xem [Phần 5](#phần-5-server-đồng-thời-concurrent-servers)).
+3. Hai bên trao đổi dữ liệu bằng `read()` / `write()`.
+4. TCP truyền dữ liệu dưới dạng **luồng byte** (byte stream) giữa hai tiến trình, không giữ ranh giới giữa các lần ghi, nên chương trình phải tự xử lý việc đọc/ghi thiếu byte.
+
+---
+
+## Phần 8. Kết thúc kết nối, tín hiệu `SIGPIPE` và các kịch bản sự cố
+
+### 8.1. Kết thúc bình thường (Normal Termination)
+
+Sơ đồ máy trạng thái (state machine) của một kết nối TCP:
+
+![Máy trạng thái TCP](image-8.png)
+
+| # | Trạng thái | Ý nghĩa |
+|---|------------|---------|
+| 1 | `LISTEN` | Chờ yêu cầu kết nối từ bất kỳ máy TCP nào |
+| 2 | `SYN-SENT` | Đã gửi yêu cầu kết nối (SYN), đang chờ yêu cầu kết nối tương ứng từ bên kia |
+| 3 | `SYN-RECEIVED` | Đã gửi và nhận yêu cầu kết nối, đang chờ ACK xác nhận |
+| 4 | `ESTABLISHED` | Kết nối đã mở, dữ liệu nhận được sẽ chuyển lên ứng dụng |
+| 5 | `FIN-WAIT-1` | Đã gửi FIN, chờ ACK cho FIN đó hoặc chờ FIN từ bên kia |
+| 6 | `FIN-WAIT-2` | FIN đã được ACK, chờ FIN từ bên kia |
+| 7 | `CLOSE-WAIT` | Đã nhận FIN từ bên kia, chờ ứng dụng cục bộ gọi `close()` |
+| 8 | `CLOSING` | Hai bên cùng gửi FIN, chờ ACK cho FIN của mình |
+| 9 | `LAST-ACK` | Đã nhận FIN và đã gửi FIN của mình, chờ ACK cuối cùng |
+| 10 | `TIME-WAIT` | Chờ đủ lâu (2 × MSL) để chắc chắn bên kia đã nhận ACK cuối |
+| 11 | `CLOSED` | Trạng thái "giả định", biểu thị không có kết nối nào |
+
+Trình tự các segment khi kết thúc kết nối:
+
+![Trình tự kết thúc kết nối TCP](image-9.png)
+
+### 8.2. Tín hiệu `SIGPIPE`
+
+![Kịch bản SIGPIPE](image-6.png)
+
+**Diễn biến:**
+
+1. Client chạy bình thường, gửi `"hi there"`, server echo lại.
+2. Tiến trình con của server bị kill. Nhân phía server gửi FIN cho client.
+3. Người dùng nhập `"bye"` ở client.
+4. Lần `writen()` thứ nhất gửi byte đầu tiên. Việc này hợp lệ vì socket mới chỉ nhận FIN.
+5. TCP phía server không còn tiến trình nào giữ socket nên phản hồi bằng **RST**.
+6. Client gọi `writen()` lần thứ hai trên socket đã nhận RST.
+7. Nhân gửi tín hiệu `SIGPIPE` cho tiến trình client. Hành động mặc định của `SIGPIPE` là kết thúc tiến trình, shell in ra:
+
+```
+Broken pipe
+```
+
+![Kết quả chạy: Broken pipe](image-7.png)
+
+**Nguyên nhân:**
+
+- Lần ghi **thứ nhất** khiến server gửi RST.
+- Lần ghi **thứ hai** mới khiến tiến trình nhận `SIGPIPE`.
+
+> **Quy tắc:** ghi dữ liệu vào socket đã nhận **FIN** là hợp lệ; ghi dữ liệu vào socket đã nhận **RST** là lỗi.
+
+Nếu chương trình bỏ qua hoặc bắt `SIGPIPE`, `write()` sẽ trả về `-1` với `errno = EPIPE` thay vì làm chết tiến trình.
+
+### 8.3. Các kịch bản server/client gặp sự cố
+
+#### Máy server bị sập (Crash of Server Host)
+
+**Tình huống:** client và server đang có một kết nối TCP. Bất ngờ **toàn bộ máy** server bị sập (mất điện, rút cáp mạng, kernel panic...), chứ không chỉ tiến trình server bị tắt.
+
+**Điểm mấu chốt:** máy sập thì không kịp gửi FIN hay RST, nên client không nhận được thông báo nào.
+
+| Sự cố | Client có biết ngay không? | Lý do |
+|-------|---------------------------|-------|
+| Chỉ **tiến trình** server chết | Có | Nhân server vẫn chạy, tự đóng socket và gửi FIN |
+| Cả **máy** server sập | Không | Không có gì được gửi đi |
+
+**Diễn biến ở phía client:**
+
+1. Client gọi `write()` / `send()`. Lệnh thành công vì dữ liệu chỉ mới được chép vào bộ đệm gửi của nhân phía client.
+2. TCP của client gửi segment đi nhưng không có ACK trả về.
+3. TCP truyền lại nhiều lần, khoảng cách giữa các lần tăng gấp đôi (exponential backoff).
+4. Trong suốt thời gian này, client bị chặn (block) ở `read()`.
+5. Khi TCP bỏ cuộc (theo Stevens khoảng 9 phút trên BSD; trên Linux thường khoảng 15 phút trở lên, phụ thuộc tham số `tcp_retries2`), `read()` trả về lỗi:
+
+| Lỗi | Khi nào |
+|-----|---------|
+| `ETIMEDOUT` | Hết thời gian mà không có phản hồi nào |
+| `EHOSTUNREACH` / `ENETUNREACH` | Một router trung gian gửi về thông báo ICMP "không đến được đích" |
+
+![Máy server bị sập](image-10.png)
+
+**Cách phát hiện sớm:** nếu client chỉ đọc mà không gửi gì, nó sẽ không bao giờ phát hiện server đã sập (xem [trường hợp 1b](#trường-hợp-1-read-khi-bên-kia-mất-mạng)). Các giải pháp:
+
+- Đặt timeout cho `read()` (tùy chọn `SO_RCVTIMEO`, hoặc dùng `select()` / `poll()`).
+- Bật `SO_KEEPALIVE`: sau một thời gian im lặng, TCP tự gửi gói thăm dò để kiểm tra bên kia còn sống không.
+- Tự cài heartbeat ở tầng ứng dụng.
+
+#### Máy server sập rồi khởi động lại (Crashing and Rebooting of Server Host)
+
+1. Client và server đang có kết nối TCP, đã trao đổi dữ liệu bình thường.
+2. Máy server sập và khởi động lại. Client không biết gì, vì máy sập không gửi FIN hay RST.
+3. Trạng thái kết nối nằm trong RAM, nên sau khi reboot server mất toàn bộ thông tin về kết nối cũ. Với server, kết nối đó chưa từng tồn tại.
+4. Client gửi một dòng dữ liệu, segment tới server.
+5. TCP của server nhận segment thuộc về một kết nối nó không biết, nên trả lời bằng **RST**.
+6. Client đang block ở `read()` nhận RST, `read()` trả về lỗi `ECONNRESET`.
+
+#### Trường hợp 1: `read()` khi bên kia mất mạng
+
+Dễ hiểu nhầm ở đây: `read()` không gửi dữ liệu nên không có chuyện chờ ACK. `read()` chỉ chờ dữ liệu từ bên kia tới. Kết quả phụ thuộc vào việc trước đó máy mình còn dữ liệu đã gửi mà chưa được ACK hay không.
+
+**1a. Trước đó đã `write()` dữ liệu và chưa nhận ACK:**
+
+- TCP giữ dữ liệu trong bộ đệm gửi và truyền lại nhiều lần, khoảng cách tăng dần.
+- Trong lúc đó `read()` bị block.
+- Khi TCP hết số lần truyền lại (Linux: `tcp_retries2`, mặc định 15 lần), nhân đánh dấu lỗi cho socket.
+- `read()` trả về `-1` với `errno = ETIMEDOUT`.
+
+**1b. Chỉ đọc, chưa gửi gì:**
+
+- Không có dữ liệu nào cần truyền lại, nên TCP không gửi gì lên mạng và không phát hiện được bất thường.
+- `read()` block mãi mãi, không có lỗi.
+- Đây chính là lý do cần `SO_KEEPALIVE`, timeout của `select()` / `poll()`, hoặc heartbeat ở tầng ứng dụng.
+
+#### Trường hợp 2: `write()` khi bên kia đã mất mạng
+
+**Điểm mấu chốt:** `write()` trả về thành công **không** có nghĩa là bên kia đã nhận. `write()` chỉ chép dữ liệu vào bộ đệm gửi của nhân rồi trả về ngay.
+
+1. `write()` lần đầu thành công (trả về số byte đã ghi), dù bên kia đã mất mạng.
+2. TCP gửi dữ liệu, không có ACK, rồi truyền lại nhiều lần.
+3. Nếu chương trình tiếp tục `write()` đến khi bộ đệm gửi đầy, `write()` bắt đầu block (hoặc trả về `EAGAIN` nếu socket ở chế độ non-blocking).
+4. Khi TCP bỏ cuộc, socket ghi nhận lỗi `ETIMEDOUT`. Lỗi này được báo ở lần gọi `read()` / `write()` **kế tiếp**, không phải ở lần `write()` đã gửi dữ liệu đó.
+5. Sau khi socket đã có lỗi, `write()` tiếp theo gây tín hiệu `SIGPIPE` (mặc định làm chương trình kết thúc). Nếu bỏ qua `SIGPIPE` thì `write()` trả về lỗi `EPIPE`.
+
+---
+
+## Phần 9. UDP: `recvfrom` / `sendto`, UDP Echo Server/Client, mất datagram
+
+### 9.1. `recvfrom()` và `sendto()`
+
+**Mô hình kiến trúc UDP:**
+
+![Mô hình client–server UDP](image-11.png)
+
+Điểm quan trọng nhất: UDP **không** có bước `connect()` / `accept()` như TCP. Thay vào đó UDP dùng hai hàm riêng để gửi và nhận dữ liệu:
+
+```c
+#include <sys/socket.h>
+
+ssize_t recvfrom(int sockfd, void *buff, size_t nbytes, int flags,
+                 struct sockaddr *from, socklen_t *addrlen);
+
+ssize_t sendto(int sockfd, const void *buff, size_t nbytes, int flags,
+               const struct sockaddr *to, socklen_t addrlen);
+```
+
+**Trả về:** số byte đã đọc/ghi nếu thành công, `-1` nếu lỗi.
+
+| | TCP | UDP |
+|---|-----|-----|
+| Client | `connect()` rồi `write()` | Gửi thẳng datagram bằng `sendto()`, kèm địa chỉ server |
+| Server | `accept()` rồi `read()` | Gọi `recvfrom()`, chờ datagram từ bất kỳ client nào |
+
+`recvfrom()` trả về cả **datagram** lẫn **địa chỉ giao thức** của client đã gửi, nhờ đó server biết phải gửi phản hồi về đâu.
+
+#### Tham số `to` của `sendto()`
+
+`to` là cấu trúc địa chỉ socket chứa địa chỉ đích (IP + cổng) mà datagram sẽ được gửi tới. Kích thước cấu trúc được truyền qua `addrlen`.
+
+```c
+sendto(sockfd, buf, len, 0,
+       (struct sockaddr *) &server_addr, sizeof(server_addr));
+```
+
+```
+server_addr
+    ├── IP address
+    └── Port
+```
+
+#### Tham số `from` của `recvfrom()`
+
+`recvfrom()` điền vào cấu trúc mà `from` trỏ tới địa chỉ giao thức của bên đã gửi datagram.
+
+```c
+struct sockaddr_in client_addr;
+socklen_t addrlen = sizeof(client_addr);
+
+recvfrom(sockfd, buf, sizeof(buf), 0,
+         (struct sockaddr *) &client_addr, &addrlen);
+```
+
+Sau khi `recvfrom()` trả về:
+
+```
+client_addr
+    ├── IP của client
+    └── Port của client
+```
+
+- Server biết được datagram đến từ client nào.
+- `addrlen` là tham số giá trị–kết quả (xem [Phần 2.2](#22-tham-số-giá-trị--kết-quả-value-result-arguments)): khi trả về, nó chứa số byte thực tế nhân đã ghi vào `client_addr`.
+
+### 9.2. UDP Echo Server/Client
+
+**Mô hình kiến trúc:**
+
+![Mô hình UDP echo](image-12.png)
+
+**Không có EOF:** UDP là giao thức phi kết nối (connectionless), nên không có khái niệm EOF như TCP. Với TCP, khi bên kia đóng kết nối, `read()` trả về `0`. UDP không có kết nối để đóng, vì vậy server không thể dựa vào EOF để thoát vòng lặp.
+
+**Server lặp (iterative), không phải server đồng thời:** không có lời gọi `fork()`, một tiến trình server duy nhất xử lý tất cả client.
+
+| Loại server | Thường là |
+|-------------|-----------|
+| TCP | Đồng thời (concurrent) |
+| UDP | Lặp (iterative) |
+
+```c
+for (;;) {
+    n = recvfrom(sockfd, buf, MAXLINE, 0, (struct sockaddr *) &cliaddr, &len);
+    sendto(sockfd, buf, n, 0, (struct sockaddr *) &cliaddr, len);
+}
+```
+
+```
+Client A ──┐
+           │
+Client B ──┼──> UDP Server Process
+           │
+Client C ──┘
+```
+
+Server xử lý từng datagram lần lượt.
+
+#### Bộ đệm nhận của socket UDP
+
+Mỗi socket UDP có một **bộ đệm nhận** (receive buffer), đóng vai trò hàng đợi ngầm (implied queuing). Mỗi datagram đến socket được đặt vào bộ đệm này; mỗi lần gọi `recvfrom()`, datagram kế tiếp được trả về theo thứ tự **FIFO** (First In, First Out).
+
+Khi có nhiều datagram đổ về cùng lúc, có thể tăng kích thước bộ đệm nhận:
+
+1. Đọc giá trị hiện tại bằng `getsockopt(..., SO_RCVBUF, ...)`.
+2. Đặt giá trị lớn hơn bằng `setsockopt(..., SO_RCVBUF, ...)` (xem [Phần 10.1](#101-getsockopt-và-setsockopt)).
+
+Giá trị đặt không được vượt quá mức trần của hệ thống; nếu vượt, nhân tự giới hạn lại bằng mức trần.
+
+```bash
+# Kích thước bộ đệm nhận tối đa cho phép (trần hệ thống)
+sysctl net.core.rmem_max
+
+# Kích thước bộ đệm nhận mặc định khi tạo socket (nếu không gọi setsockopt)
+sysctl net.core.rmem_default
+```
+
+![Kiểm tra rmem_max và rmem_default](image-13.png)
+
+### 9.3. Mất datagram (Lost Datagrams)
+
+![Mất datagram UDP](image-14.png)
+
+**Mất gói UDP** (UDP packet loss) xảy ra khi các datagram gửi đi không tới được đích, tạo ra những "lỗ hổng" trong dữ liệu truyền.
+
+UDP không có cơ chế xác nhận đã nhận gói. Khác với TCP (bảo đảm toàn bộ dữ liệu tới nơi và tự truyền lại gói bị mất), UDP gửi gói đi mà không chờ ACK. Gói đã mất là mất hẳn.
+
+Gói UDP có thể bị mất ở ba chỗ:
+
+| Vị trí | Nguyên nhân |
+|--------|-------------|
+| **Chiều đi** (on the way out) | Ứng dụng gửi rất nhiều gói. Mỗi socket UDP có một bộ đệm gửi, nhân Linux cố đẩy gói ra càng nhanh càng tốt. Nếu card mạng chậm hoặc quá tải, không gửi kịp tốc độ đưa gói vào hàng đợi, hàng đợi tràn và gói bị bỏ |
+| **Trên đường truyền** (in transit) | Tắc nghẽn mạng, lỗi định tuyến hoặc các yếu tố khác khiến gói không tới đích |
+| **Chiều đến** (on the way in) | Gói tới máy nhận và được đưa vào bộ đệm nhận của socket. Nếu bộ đệm đầy hoặc quá nhỏ (ứng dụng đọc không kịp), gói mới đến bị bỏ |
+
+Kích thước bộ đệm nhận quyết định số gói có thể chứa cùng lúc mà không bị mất. Xem cách kiểm tra và điều chỉnh ở [Phần 9.2](#bộ-đệm-nhận-của-socket-udp) và trang man `socket(7)`.
+
+---
+
+## Phần 10. Tùy chọn socket: `getsockopt` / `setsockopt`, `fcntl`
+
+### 10.1. `getsockopt()` và `setsockopt()`
+
+Hai hàm dùng để đọc và thay đổi các tùy chọn (option) của một socket.
+
+```c
+#include <sys/socket.h>
+
+int getsockopt(int sockfd, int level, int optname,
+               void *optval, socklen_t *optlen);
+
+int setsockopt(int sockfd, int level, int optname,
+               const void *optval, socklen_t optlen);
+```
+
+| Hàm | Chức năng |
+|-----|-----------|
+| `getsockopt()` | Lấy giá trị hiện tại của option |
+| `setsockopt()` | Đặt giá trị mới cho option |
+
+**Trả về:** `0` nếu thành công, `-1` nếu lỗi (và đặt `errno`).
+
+**Ý nghĩa các tham số:**
+
+| Tham số | Ý nghĩa |
+|---------|---------|
+| `sockfd` | Descriptor của socket cần đọc/đặt option |
+| `level` | Tầng chứa option: `SOL_SOCKET` (chung cho mọi socket), `IPPROTO_IP` (của IPv4), `IPPROTO_TCP` (riêng của TCP) |
+| `optname` | Tên option, ví dụ `SO_KEEPALIVE`, `SO_RCVTIMEO` |
+| `optval` | Con trỏ tới vùng nhớ chứa giá trị option. Với `setsockopt()` là giá trị cần đặt; với `getsockopt()` là nơi nhân ghi kết quả |
+| `optlen` | Kích thước vùng `optval`. `setsockopt()` nhận giá trị; `getsockopt()` nhận con trỏ vì nhân ghi lại kích thước thực tế (tham số giá trị–kết quả) |
+
+### 10.2. Một số option thường gặp
+
+| Level | Option | Ý nghĩa |
+|-------|--------|---------|
+| `SOL_SOCKET` | `SO_REUSEADDR` | Cho phép `bind()` vào địa chỉ/cổng đang ở trạng thái `TIME_WAIT`. Thường đặt cho socket lắng nghe của server, trước `bind()` |
+| `SOL_SOCKET` | `SO_KEEPALIVE` | Gửi gói thăm dò định kỳ để phát hiện bên kia đã chết (xem [trường hợp 1b](#trường-hợp-1-read-khi-bên-kia-mất-mạng)) |
+| `SOL_SOCKET` | `SO_RCVTIMEO` / `SO_SNDTIMEO` | Thời gian chờ tối đa của `read()` / `write()`; quá thời gian trả về lỗi `EAGAIN` / `EWOULDBLOCK` |
+| `SOL_SOCKET` | `SO_RCVBUF` / `SO_SNDBUF` | Kích thước bộ đệm nhận / gửi |
+| `SOL_SOCKET` | `SO_ERROR` | Chỉ đọc (chỉ dùng với `getsockopt()`): lấy mã lỗi đang chờ xử lý trên socket rồi xóa nó |
+
+### 10.3. Ví dụ
+
+Bật keepalive cho socket:
+
+```c
+int on = 1;
+if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on)) < 0) {
+    perror("setsockopt SO_KEEPALIVE");
+}
+```
+
+Đặt timeout 5 giây cho `read()`:
+
+```c
+struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+```
+
+Đọc kích thước bộ đệm nhận hiện tại:
+
+```c
+int rcvbuf;
+socklen_t len = sizeof(rcvbuf);
+if (getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, &len) == 0) {
+    printf("SO_RCVBUF = %d\n", rcvbuf);
+}
+```
+
+### 10.4. `fcntl()`
+
+`fcntl()` là system call dùng để đọc hoặc thay đổi các thuộc tính (file status flags) của một file descriptor. Vì socket cũng là file descriptor, `fcntl()` thường được dùng để thay đổi cách socket hoạt động.
+
+```c
+#include <fcntl.h>
+
+int fcntl(int fd, int cmd, ... /* int arg */);
+```
+
+| Cách dùng | Ý nghĩa |
+|-----------|---------|
+| `F_GETFL` | Đọc các flag hiện tại của socket |
+| `F_SETFL` + `O_NONBLOCK` | Đặt socket sang chế độ non-blocking |
+| `F_SETFL` + `O_ASYNC` | Đặt socket sang chế độ signal-driven I/O |
+| `F_SETOWN` | Chỉ định tiến trình / nhóm tiến trình nhận `SIGIO` / `SIGURG` |
+
+Ví dụ: đặt TCP socket sang chế độ non-blocking:
+
+```c
+int flags = fcntl(sockfd, F_GETFL, 0);
+fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+```
+
+Phải đọc flag cũ rồi OR thêm `O_NONBLOCK`; nếu gọi thẳng `F_SETFL` với `O_NONBLOCK` sẽ xóa mất các flag khác.
+
+Khi đó `read(sockfd, buf, sizeof(buf))` không còn block vô thời hạn: nếu chưa có dữ liệu, nó trả về `-1` ngay với `errno = EAGAIN` / `EWOULDBLOCK`.
