@@ -45,7 +45,7 @@ Mô hình OSI (Open Systems Interconnection – Kết nối các hệ thống m�
 | 2. Liên kết dữ liệu (Data link) | Trình điều khiển thiết bị và phần cứng (ví dụ Ethernet) | Trình điều khiển + phần cứng  |
 | 1. Vật lý (Physical)            | ↑                                                       | ↑                             |
 
-![Sơ đồ đóng gói và mở gói dữ liệu](image.png)
+![Sơ đồ đóng gói và mở gói dữ liệu](./img/image.png)
 
 #### Dữ liệu được gửi qua mạng như thế nào? Tại sao mô hình OSI cần nhiều tầng như vậy?
 
@@ -82,7 +82,7 @@ Các mốc chính:
 - Một giao thức tầng vận chuyển trong bộ TCP/IP cần cả địa chỉ IP lẫn số cổng (port) ở mỗi đầu để tạo kết nối. Sự kết hợp giữa một địa chỉ IP và một số cổng được gọi là **địa chỉ socket** (socket address).
 - Địa chỉ socket của máy khách xác định duy nhất tiến trình khách, cũng như địa chỉ socket của máy chủ xác định duy nhất tiến trình chủ, như minh họa trong hình.
 
-![Địa chỉ socket của máy khách và máy chủ](image-1.png)
+![Địa chỉ socket của máy khách và máy chủ](./img/image-1.png)
 
 - Để sử dụng dịch vụ của tầng vận chuyển trên Internet, ta cần một cặp địa chỉ socket: địa chỉ socket của máy khách và địa chỉ socket của máy chủ.
 - Bốn thông tin này nằm trong phần đầu gói tin tầng mạng và phần đầu gói tin tầng vận chuyển. Phần đầu thứ nhất chứa các địa chỉ IP; phần đầu thứ hai chứa các số cổng.
@@ -111,11 +111,11 @@ Từ đây sinh ra hai câu hỏi:
 
 Cấu trúc địa chỉ socket được truyền từ nhân sang tiến trình:
 
-![Cấu trúc địa chỉ socket truyền từ nhân sang tiến trình](image-3.png)
+![Cấu trúc địa chỉ socket truyền từ nhân sang tiến trình](./img/image-3.png)
 
 ### 2.3. Thứ tự byte (Byte Ordering)
 
-![Minh họa thứ tự byte](image-2.png)
+![Minh họa thứ tự byte](./img/image-2.png)
 
 #### Thứ tự byte nhỏ trước (Little Endian)
 
@@ -361,7 +361,7 @@ Hai hàng đợi mà nhân duy trì cho socket lắng nghe:
 - **Điểm quan trọng:** bắt tay 3 bước do nhân tự làm, không phụ thuộc vào việc server có đang gọi `accept()` hay không. `accept()` chỉ lấy ra kết nối đã hoàn tất.
 - `backlog` (trên Linux hiện nay) là giới hạn của hàng đợi đã hoàn tất. Giá trị bị chặn bởi `/proc/sys/net/core/somaxconn`. Có thể dùng hằng `SOMAXCONN`.
 
-![Hai hàng đợi của socket lắng nghe](image-4.png)
+![Hai hàng đợi của socket lắng nghe](./img/image-4.png)
 
 - Khi hàng đợi đầy mà có SYN mới đến, TCP **bỏ qua** SYN đó (không gửi RST). Client sẽ tự gửi lại SYN và có cơ hội được nhận sau. Nếu gửi RST, client sẽ hiểu nhầm là "không có server" (`ECONNREFUSED`).
 - Không nên đặt `backlog = 0`, vì mỗi hệ thống hiểu giá trị này khác nhau.
@@ -521,7 +521,7 @@ printf("Cổng cục bộ: %d\n", ntohs(local.sin_port));
 
 ## Phần 7. TCP Echo Server và Client (`str_echo` / `str_cli`)
 
-![Mô hình TCP echo client–server](image-5.png)
+![Mô hình TCP echo client–server](./img/image-5.png)
 
 Đây là mô hình TCP client–server cơ bản: client gửi dữ liệu tới server, server nhận rồi gửi lại đúng dữ liệu đó cho client.
 
@@ -545,7 +545,7 @@ Qua ví dụ này có thể quan sát trọn luồng xử lý của một kết 
 
 Sơ đồ máy trạng thái (state machine) của một kết nối TCP:
 
-![Máy trạng thái TCP](image-8.png)
+![Máy trạng thái TCP](./img/image-8.png)
 
 | # | Trạng thái | Ý nghĩa |
 |---|------------|---------|
@@ -563,11 +563,11 @@ Sơ đồ máy trạng thái (state machine) của một kết nối TCP:
 
 Trình tự các segment khi kết thúc kết nối:
 
-![Trình tự kết thúc kết nối TCP](image-9.png)
+![Trình tự kết thúc kết nối TCP](./img/image-9.png)
 
 ### 8.2. Tín hiệu `SIGPIPE`
 
-![Kịch bản SIGPIPE](image-6.png)
+![Kịch bản SIGPIPE](./img/image-6.png)
 
 **Diễn biến:**
 
@@ -583,7 +583,7 @@ Trình tự các segment khi kết thúc kết nối:
 Broken pipe
 ```
 
-![Kết quả chạy: Broken pipe](image-7.png)
+![Kết quả chạy: Broken pipe](./img/image-7.png)
 
 **Nguyên nhân:**
 
@@ -620,7 +620,7 @@ Nếu chương trình bỏ qua hoặc bắt `SIGPIPE`, `write()` sẽ trả về
 | `ETIMEDOUT` | Hết thời gian mà không có phản hồi nào |
 | `EHOSTUNREACH` / `ENETUNREACH` | Một router trung gian gửi về thông báo ICMP "không đến được đích" |
 
-![Máy server bị sập](image-10.png)
+![Máy server bị sập](./img/image-10.png)
 
 **Cách phát hiện sớm:** nếu client chỉ đọc mà không gửi gì, nó sẽ không bao giờ phát hiện server đã sập (xem [trường hợp 1b](#trường-hợp-1-read-khi-bên-kia-mất-mạng)). Các giải pháp:
 
@@ -672,7 +672,7 @@ Dễ hiểu nhầm ở đây: `read()` không gửi dữ liệu nên không có 
 
 **Mô hình kiến trúc UDP:**
 
-![Mô hình client–server UDP](image-11.png)
+![Mô hình client–server UDP](./img/image-11.png)
 
 Điểm quan trọng nhất: UDP **không** có bước `connect()` / `accept()` như TCP. Thay vào đó UDP dùng hai hàm riêng để gửi và nhận dữ liệu:
 
@@ -737,7 +737,7 @@ client_addr
 
 **Mô hình kiến trúc:**
 
-![Mô hình UDP echo](image-12.png)
+![Mô hình UDP echo](./img/image-12.png)
 
 **Không có EOF:** UDP là giao thức phi kết nối (connectionless), nên không có khái niệm EOF như TCP. Với TCP, khi bên kia đóng kết nối, `read()` trả về `0`. UDP không có kết nối để đóng, vì vậy server không thể dựa vào EOF để thoát vòng lặp.
 
@@ -784,11 +784,11 @@ sysctl net.core.rmem_max
 sysctl net.core.rmem_default
 ```
 
-![Kiểm tra rmem_max và rmem_default](image-13.png)
+![Kiểm tra rmem_max và rmem_default](./img/image-13.png)
 
 ### 9.3. Mất datagram (Lost Datagrams)
 
-![Mất datagram UDP](image-14.png)
+![Mất datagram UDP](./img/image-14.png)
 
 **Mất gói UDP** (UDP packet loss) xảy ra khi các datagram gửi đi không tới được đích, tạo ra những "lỗ hổng" trong dữ liệu truyền.
 
